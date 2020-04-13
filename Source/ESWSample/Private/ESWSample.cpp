@@ -13,8 +13,39 @@ static const FName ESWSampleTabName("ESWSample");
 
 #define LOCTEXT_NAMESPACE "FESWSampleModule"
 
+void RefreshLevelEditorToolBar()
+{
+	const FName LevelEditorModuleName("LevelEditor");
+	const FTabId ToolbarTabId(FName("LevelEditorToolBar"));
+	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>(LevelEditorModuleName);
+	if (auto TabManager = LevelEditorModule.GetLevelEditorTabManager())
+	{
+		if (auto Toolbar = TabManager->FindExistingLiveTab(ToolbarTabId))
+		{
+			Toolbar->RequestCloseTab();
+			Toolbar.Reset();
+			TabManager->InvokeTab(ToolbarTabId);
+		}
+	}
+}
 class FESWSampleImpl
 {
+public:
+	FESWSampleImpl()
+	{
+	}
+	~FESWSampleImpl()
+	{
+		if (PluginTab.IsValid())
+		{
+			if (auto PluginTabPtr = PluginTab.Pin())
+			{
+				PluginTabPtr->RequestCloseTab();
+			}
+			PluginTab.Reset();
+		}
+	}
+
 public:
 	/** This function will be bound to Command (by default it will bring up plugin window) */
 	void PluginButtonClicked();
@@ -25,6 +56,7 @@ public:
 	TSharedRef<class SDockTab> OnSpawnPluginTab(const class FSpawnTabArgs& SpawnTabArgs);
 
 private:
+	TWeakPtr<SDockTab> PluginTab;
 };
 
 void FESWSampleModule::StartupModule()
@@ -72,6 +104,9 @@ void FESWSampleModule::ShutdownModule()
 
 	Impl.Reset();
 	PluginCommands.Reset();
+
+	RefreshLevelEditorToolBar();
+
 	FESWSampleStyle::Shutdown();
 
 	FESWSampleCommands::Unregister();
@@ -87,7 +122,7 @@ TSharedRef<SDockTab> FESWSampleImpl::OnSpawnPluginTab(const FSpawnTabArgs& Spawn
 		FText::FromString(TEXT("ESWSample.cpp"))
 		);
 
-	return SNew(SDockTab)
+	return SAssignNew(PluginTab, SDockTab)
 		.TabRole(ETabRole::NomadTab)
 		[
 			// Put your tab content here!

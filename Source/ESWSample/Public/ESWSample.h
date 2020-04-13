@@ -19,4 +19,8 @@ public:
 private:
 	TSharedPtr<class FUICommandList> PluginCommands;
 	TSharedPtr<class FESWSampleImpl> Impl;
+	TSharedPtr<FExtender> MenuExtender;
+	TSharedPtr< const FExtensionBase > MenuExtension;
+	TSharedPtr<FExtender> ToolbarExtender;
+	TSharedPtr< const FExtensionBase > ToolbarExtension;
 };

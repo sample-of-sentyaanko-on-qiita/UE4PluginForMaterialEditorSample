@@ -9,12 +9,18 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 
+#include "SEditorViewportViewMenu.h"
+#include "UnrealEdGlobals.h"
+
 static const FName ESWSampleTabName("ESWSample");
 
 #define LOCTEXT_NAMESPACE "FESWSampleModule"
 
 // If your editor implements the extension "ILevelEditor::RegenerateMen()", enable this macro.
 //#define IMPLEMENT_ILevelEditor_RegenerateMen
+
+// If your editor implements the extension "SEditorViewportViewMenu::GetMenuExtenders()", enable this macro.
+//#define IMPLEMENT_SEditorViewportViewMenu_GetMenuExtenders
 
 void RefreshLevelEditorMenuAndToolBar()
 {
@@ -41,6 +47,44 @@ void RefreshLevelEditorMenuAndToolBar()
 		}
 	}
 }
+
+void SearchSLevelEditorViewportViewMenuAndRemoveExtension(const TSharedRef<SWidget>& Widget, const TSharedRef< const FExtensionBase >& MenuExtension)
+{
+	if (Widget->GetType() == FName("SLevelEditorViewportViewMenu"))
+	{
+		auto EditorViewportViewMenu = StaticCastSharedRef<SEditorViewportViewMenu>(Widget);
+#ifdef IMPLEMENT_SEditorViewportViewMenu_GetMenuExtenders
+		const TSharedPtr<class FExtender>& MenuExtenders = EditorViewportViewMenu->GetMenuExtenders();
+		MenuExtenders->RemoveExtension(MenuExtension);
+#endif
+	}
+	else
+	{
+		if (auto Children = Widget->GetAllChildren())
+		{
+			for (int32 ChildIndex = 0; ChildIndex < Children->Num(); ChildIndex++)
+			{
+				auto Child = Children->GetChildAt(ChildIndex);
+				SearchSLevelEditorViewportViewMenuAndRemoveExtension(Child, MenuExtension);
+			}
+		}
+	}
+}
+
+void SearchSLevelEditorViewportViewMenuAndRemoveExtension(const TSharedRef< const FExtensionBase >& MenuExtension)
+{
+	const FName LevelEditorModuleName("LevelEditor");
+	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>(LevelEditorModuleName);
+	auto LevelEditorWeak = LevelEditorModule.GetLevelEditorInstance();
+	if (LevelEditorWeak.IsValid())
+	{
+		if (auto LevelEditor = LevelEditorWeak.Pin())
+		{
+			SearchSLevelEditorViewportViewMenuAndRemoveExtension(LevelEditor.ToSharedRef(), MenuExtension);
+		}
+	}
+}
+
 class FESWSampleImpl
 {
 public:
@@ -92,15 +136,15 @@ void FESWSampleModule::StartupModule()
 	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
 	
 	{
-		TSharedPtr<FExtender> MenuExtender = MakeShareable(new FExtender());
-		MenuExtender->AddMenuExtension("WindowLayout", EExtensionHook::After, PluginCommands, FMenuExtensionDelegate::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::AddMenuExtension));
+		MenuExtender = MakeShareable(new FExtender());
+		MenuExtension = MenuExtender->AddMenuExtension("WindowLayout", EExtensionHook::After, PluginCommands, FMenuExtensionDelegate::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::AddMenuExtension));
 
 		LevelEditorModule.GetMenuExtensibilityManager()->AddExtender(MenuExtender);
 	}
 	
 	{
-		TSharedPtr<FExtender> ToolbarExtender = MakeShareable(new FExtender);
-		ToolbarExtender->AddToolBarExtension("Settings", EExtensionHook::After, PluginCommands, FToolBarExtensionDelegate::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::AddToolbarExtension));
+		ToolbarExtender = MakeShareable(new FExtender);
+		ToolbarExtension = ToolbarExtender->AddToolBarExtension("Settings", EExtensionHook::After, PluginCommands, FToolBarExtensionDelegate::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::AddToolbarExtension));
 		
 		LevelEditorModule.GetToolBarExtensibilityManager()->AddExtender(ToolbarExtender);
 	}
@@ -117,6 +161,17 @@ void FESWSampleModule::ShutdownModule()
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
 
+	SearchSLevelEditorViewportViewMenuAndRemoveExtension(MenuExtension.ToSharedRef());
+
+	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
+	LevelEditorModule.GetMenuExtensibilityManager()->RemoveExtender(MenuExtender);
+	LevelEditorModule.GetToolBarExtensibilityManager()->RemoveExtender(ToolbarExtender);
+	MenuExtension.Reset();
+	MenuExtender.Reset();
+	ToolbarExtension.Reset();
+	ToolbarExtender.Reset();
+	PluginCommands->UnmapAction(FESWSampleCommands::Get().OpenPluginWindow);
+
 	Impl.Reset();
 	PluginCommands.Reset();
 
@@ -127,6 +182,11 @@ void FESWSampleModule::ShutdownModule()
 	FESWSampleCommands::Unregister();
 
 	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ESWSampleTabName);
+
+	if (GEngine)
+	{
+		GEngine->ForceGarbageCollection(true);
+	}
 }
 
 TSharedRef<SDockTab> FESWSampleImpl::OnSpawnPluginTab(const FSpawnTabArgs& SpawnTabArgs)

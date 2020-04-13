@@ -95,6 +95,8 @@ void FESWSampleModule::StartupModule()
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(ESWSampleTabName, FOnSpawnTab::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::OnSpawnPluginTab))
 		.SetDisplayName(LOCTEXT("FESWSampleTabTitle", "ESWSample"))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	RefreshLevelEditorToolBar();
 }
 
 void FESWSampleModule::ShutdownModule()

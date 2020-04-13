@@ -13,7 +13,10 @@ static const FName ESWSampleTabName("ESWSample");
 
 #define LOCTEXT_NAMESPACE "FESWSampleModule"
 
-void RefreshLevelEditorToolBar()
+// If your editor implements the extension "ILevelEditor::RegenerateMen()", enable this macro.
+//#define IMPLEMENT_ILevelEditor_RegenerateMen
+
+void RefreshLevelEditorMenuAndToolBar()
 {
 	const FName LevelEditorModuleName("LevelEditor");
 	const FTabId ToolbarTabId(FName("LevelEditorToolBar"));
@@ -25,6 +28,16 @@ void RefreshLevelEditorToolBar()
 			Toolbar->RequestCloseTab();
 			Toolbar.Reset();
 			TabManager->InvokeTab(ToolbarTabId);
+		}
+	}
+	auto LevelEditorWeak = LevelEditorModule.GetLevelEditorInstance();
+	if (LevelEditorWeak.IsValid())
+	{
+		if (auto LevelEditor = LevelEditorWeak.Pin())
+		{
+#ifdef IMPLEMENT_ILevelEditor_RegenerateMen
+			LevelEditor->RegenerateMenu();
+#endif
 		}
 	}
 }
@@ -96,7 +109,7 @@ void FESWSampleModule::StartupModule()
 		.SetDisplayName(LOCTEXT("FESWSampleTabTitle", "ESWSample"))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 
-	RefreshLevelEditorToolBar();
+	RefreshLevelEditorMenuAndToolBar();
 }
 
 void FESWSampleModule::ShutdownModule()
@@ -107,7 +120,7 @@ void FESWSampleModule::ShutdownModule()
 	Impl.Reset();
 	PluginCommands.Reset();
 
-	RefreshLevelEditorToolBar();
+	RefreshLevelEditorMenuAndToolBar();
 
 	FESWSampleStyle::Shutdown();
 

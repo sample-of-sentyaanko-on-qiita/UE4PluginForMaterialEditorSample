@@ -16,11 +16,20 @@ public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 	
+	/** This function is for registering to the MaterialEditorModule's OnMaterialEditorOpened event. */
+public:
+	void OnMaterialEditorOpened(TWeakPtr<class IMaterialEditor> InWeakMaterialEditor);
+
+	/** This function is called from the MaterialEditorModule's OnMaterialEditorClosed event via the FESWSampleInstanceObject's OnMaterialEditorClosed function. */
+public:
+	void OnMaterialEditorClosed(class FESWSampleInstanceObject* InstanceObject);
+
+	/** This delegate handle holds the MaterialEditorModule's OnMaterialEditorOpened event. */
 private:
-	TSharedPtr<class FUICommandList> PluginCommands;
-	TSharedPtr<class FESWSampleImpl> Impl;
-	TSharedPtr<FExtender> MenuExtender;
-	TSharedPtr< const FExtensionBase > MenuExtension;
-	TSharedPtr<FExtender> ToolbarExtender;
-	TSharedPtr< const FExtensionBase > ToolbarExtension;
+	FDelegateHandle OnMaterialEditorOpenedHandle;
+	FDelegateHandle OnMaterialFunctionEditorOpenedHandle;
+
+	/** This array holds the control class of the MaterialNodeList tab for each MaterialEditorWindow. */
+private:
+	TArray<TSharedPtr<class FESWSampleInstanceObject>>	InstanceObjects;
 };

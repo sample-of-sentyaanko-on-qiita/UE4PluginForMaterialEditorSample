@@ -9,111 +9,184 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 
-#include "SEditorViewportViewMenu.h"
-#include "UnrealEdGlobals.h"
-
-static const FName ESWSampleTabName("ESWSample");
+#include "MaterialEditorModule.h"
+#include "IMaterialEditor.h"
 
 #define LOCTEXT_NAMESPACE "FESWSampleModule"
 
-// If your editor implements the extension "ILevelEditor::RegenerateMen()", enable this macro.
-//#define IMPLEMENT_ILevelEditor_RegenerateMen
-
-// If your editor implements the extension "SEditorViewportViewMenu::GetMenuExtenders()", enable this macro.
-//#define IMPLEMENT_SEditorViewportViewMenu_GetMenuExtenders
-
-void RefreshLevelEditorMenuAndToolBar()
+namespace
 {
-	const FName LevelEditorModuleName("LevelEditor");
-	const FTabId ToolbarTabId(FName("LevelEditorToolBar"));
-	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>(LevelEditorModuleName);
-	if (auto TabManager = LevelEditorModule.GetLevelEditorTabManager())
-	{
-		if (auto Toolbar = TabManager->FindExistingLiveTab(ToolbarTabId))
-		{
-			Toolbar->RequestCloseTab();
-			Toolbar.Reset();
-			TabManager->InvokeTab(ToolbarTabId);
-		}
-	}
-	auto LevelEditorWeak = LevelEditorModule.GetLevelEditorInstance();
-	if (LevelEditorWeak.IsValid())
-	{
-		if (auto LevelEditor = LevelEditorWeak.Pin())
-		{
-#ifdef IMPLEMENT_ILevelEditor_RegenerateMen
-			LevelEditor->RegenerateMenu();
-#endif
-		}
-	}
+	const FName ESWSampleTabName("ESWSample");
+	const FText ESWSampleTabTitle(LOCTEXT("ESWSampleTabTitle", "ESWSample"));
 }
-
-void SearchSLevelEditorViewportViewMenuAndRemoveExtension(const TSharedRef<SWidget>& Widget, const TSharedRef< const FExtensionBase >& MenuExtension)
-{
-	if (Widget->GetType() == FName("SLevelEditorViewportViewMenu"))
-	{
-		auto EditorViewportViewMenu = StaticCastSharedRef<SEditorViewportViewMenu>(Widget);
-#ifdef IMPLEMENT_SEditorViewportViewMenu_GetMenuExtenders
-		const TSharedPtr<class FExtender>& MenuExtenders = EditorViewportViewMenu->GetMenuExtenders();
-		MenuExtenders->RemoveExtension(MenuExtension);
-#endif
-	}
-	else
-	{
-		if (auto Children = Widget->GetAllChildren())
-		{
-			for (int32 ChildIndex = 0; ChildIndex < Children->Num(); ChildIndex++)
-			{
-				auto Child = Children->GetChildAt(ChildIndex);
-				SearchSLevelEditorViewportViewMenuAndRemoveExtension(Child, MenuExtension);
-			}
-		}
-	}
-}
-
-void SearchSLevelEditorViewportViewMenuAndRemoveExtension(const TSharedRef< const FExtensionBase >& MenuExtension)
-{
-	const FName LevelEditorModuleName("LevelEditor");
-	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>(LevelEditorModuleName);
-	auto LevelEditorWeak = LevelEditorModule.GetLevelEditorInstance();
-	if (LevelEditorWeak.IsValid())
-	{
-		if (auto LevelEditor = LevelEditorWeak.Pin())
-		{
-			SearchSLevelEditorViewportViewMenuAndRemoveExtension(LevelEditor.ToSharedRef(), MenuExtension);
-		}
-	}
-}
-
-class FESWSampleImpl
+class FESWSampleInstanceObject : public TSharedFromThis<FESWSampleInstanceObject>
 {
 public:
-	FESWSampleImpl()
+	FESWSampleInstanceObject(TWeakPtr<IMaterialEditor> InWeakMaterialEditor)
+		: WeakMaterialEditor(InWeakMaterialEditor)
 	{
 	}
-	~FESWSampleImpl()
+	~FESWSampleInstanceObject()
 	{
-		if (PluginTab.IsValid())
+		if (WeakSpawnedPluginTab.IsValid())
 		{
-			if (auto PluginTabPtr = PluginTab.Pin())
+			if (auto SpawnedPluginTab = WeakSpawnedPluginTab.Pin())
 			{
-				PluginTabPtr->RequestCloseTab();
+				SpawnedPluginTab->RequestCloseTab();
 			}
-			PluginTab.Reset();
 		}
-	}
 
-public:
-	/** This function will be bound to Command (by default it will bring up plugin window) */
-	void PluginButtonClicked();
+		if (WeakMaterialEditor.IsValid())
+		{
+			if (auto MaterialEditor = WeakMaterialEditor.Pin())
+			{
+				if (OnMaterialEditorClosedHandle.IsValid())
+				{
+					MaterialEditor->OnMaterialEditorClosed().Remove(OnMaterialEditorClosedHandle);
+				}
+				if (OnUnregisterTabSpawnersHandle.IsValid())
+				{
+					MaterialEditor->OnUnregisterTabSpawners().Remove(OnUnregisterTabSpawnersHandle);
+				}
+				if (OnRegisterTabSpawnersHandle.IsValid())
+				{
+					MaterialEditor->OnRegisterTabSpawners().Remove(OnRegisterTabSpawnersHandle);
+				}
+
+				if (ToolbarExtender.IsValid())
+				{
+					MaterialEditor->GetToolBarExtensibilityManager()->RemoveExtender(ToolbarExtender);
+				}
+				if (MenuExtender.IsValid())
+				{
+					MaterialEditor->GetMenuExtensibilityManager()->RemoveExtender(MenuExtender);
+				}
+			}
+		}
+		if (PluginCommands.IsValid())
+		{
+			PluginCommands->UnmapAction(FESWSampleCommands::Get().OpenPluginWindow);
+		}
+		WeakSpawnedPluginTab.Reset();
+
+		OnMaterialEditorClosedHandle.Reset();
+		OnUnregisterTabSpawnersHandle.Reset();
+		OnRegisterTabSpawnersHandle.Reset();
+
+		ToolbarExtender.Reset();
+
+		MenuExtender.Reset();
+
+		PluginCommands.Reset();
+
+		if (WeakMaterialEditor.IsValid())
+		{
+			if (auto MaterialEditor = WeakMaterialEditor.Pin())
+			{
+				MaterialEditor->RegenerateMenusAndToolbars();
+			}
+		}
+		WeakMaterialEditor.Reset();
+	}
 	
-	void AddToolbarExtension(FToolBarBuilder& Builder);
-	void AddMenuExtension(FMenuBuilder& Builder);
-
-	TSharedRef<class SDockTab> OnSpawnPluginTab(const class FSpawnTabArgs& SpawnTabArgs);
+public:
+	void OnMaterialEditorOpened(FESWSampleModule* ESWSampleModule)
+	{
+		if (WeakMaterialEditor.IsValid())
+		{
+			if (auto MaterialEditor = WeakMaterialEditor.Pin())
+			{
+				auto SharedThis = AsShared();
+				PluginCommands = MakeShareable(new FUICommandList);
+				PluginCommands->MapAction(
+					FESWSampleCommands::Get().OpenPluginWindow,
+					FExecuteAction::CreateSP(SharedThis, &FESWSampleInstanceObject::PluginButtonClicked),
+					FCanExecuteAction());
+			
+				MenuExtender = MakeShareable(new FExtender);
+				MenuExtender->AddMenuExtension("MaterialEditor", EExtensionHook::After, PluginCommands, FMenuExtensionDelegate::CreateSP(SharedThis, &FESWSampleInstanceObject::AddMenuExtension));
+				MaterialEditor->GetMenuExtensibilityManager()->AddExtender(MenuExtender);
+			
+				ToolbarExtender = MakeShareable(new FExtender);
+				ToolbarExtender->AddToolBarExtension("Stats", EExtensionHook::After, PluginCommands, FToolBarExtensionDelegate::CreateSP(SharedThis, &FESWSampleInstanceObject::AddToolbarExtension));
+				MaterialEditor->GetToolBarExtensibilityManager()->AddExtender(ToolbarExtender);
+			
+				OnRegisterTabSpawnersHandle = MaterialEditor->OnRegisterTabSpawners().AddSP(SharedThis, &FESWSampleInstanceObject::OnRegisterTabSpawners);
+				OnUnregisterTabSpawnersHandle = MaterialEditor->OnUnregisterTabSpawners().AddSP(SharedThis, &FESWSampleInstanceObject::OnUnregisterTabSpawners);
+				OnMaterialEditorClosedHandle = MaterialEditor->OnMaterialEditorClosed().AddLambda([this, ESWSampleModule]() {
+					OnMaterialEditorClosed();
+					ESWSampleModule->OnMaterialEditorClosed(this);
+				});
+			}
+		}
+	}
+	void OnRegisterTabSpawners(const TSharedRef<FTabManager>& TabManager)
+	{
+		TabManager->RegisterTabSpawner(ESWSampleTabName, FOnSpawnTab::CreateSP(AsShared(), &FESWSampleInstanceObject::OnSpawnPluginTab))
+			.SetDisplayName(ESWSampleTabTitle)
+			.SetMenuType(ETabSpawnerMenuType::Hidden);
+	}
+	void OnUnregisterTabSpawners(const TSharedRef<FTabManager>& TabManager)
+	{
+		TabManager->UnregisterTabSpawner(ESWSampleTabName);
+	}
+	void OnMaterialEditorClosed()
+	{
+		WeakMaterialEditor.Reset();
+	}
+	TSharedRef<SDockTab> OnSpawnPluginTab(const FSpawnTabArgs& SpawnTabArgs)
+	{
+		FText WidgetText = FText::Format(
+			LOCTEXT("WindowWidgetText", "Add code to {0} in {1} to override this window's contents"),
+			FText::FromString(TEXT("FESWSampleModule::OnSpawnPluginTab")),
+			FText::FromString(TEXT("ESWSample.cpp"))
+		);
+		return
+			SAssignNew(WeakSpawnedPluginTab, SDockTab)
+			.TabRole(ETabRole::NomadTab)
+			[
+				// SAssignNew(ESWSampleView, SESWSampleView, WeakMaterialEditor)
+				SNew(STextBlock)
+				.Text(WidgetText)
+			];
+	}
+	void AddMenuExtension(FMenuBuilder& Builder)
+	{
+		Builder.AddMenuEntry(FESWSampleCommands::Get().OpenPluginWindow);
+	}
+	void AddToolbarExtension(FToolBarBuilder& Builder)
+	{
+		Builder.AddToolBarButton(FESWSampleCommands::Get().OpenPluginWindow);
+	}
+	void PluginButtonClicked()
+	{
+		if (WeakMaterialEditor.IsValid())
+		{
+			if (auto MaterialEditor = WeakMaterialEditor.Pin())
+			{
+				MaterialEditor->GetTabManager()->InvokeTab(ESWSampleTabName);
+			}
+		}
+	}
 
 private:
-	TWeakPtr<SDockTab> PluginTab;
+	/** Pointer to Material Editor or to Material Instance Editor set by constructor */
+	TWeakPtr<IMaterialEditor> WeakMaterialEditor;
+
+	TSharedPtr<FUICommandList> PluginCommands;
+
+	TSharedPtr<FExtender> MenuExtender;
+
+	TSharedPtr<FExtender> ToolbarExtender;
+
+	FDelegateHandle OnRegisterTabSpawnersHandle;
+	FDelegateHandle OnUnregisterTabSpawnersHandle;
+	FDelegateHandle OnMaterialEditorClosedHandle;
+
+	TWeakPtr<SDockTab> WeakSpawnedPluginTab;
+
+//	TSharedPtr<SESWSampleView> ESWSampleView;
+
 };
 
 void FESWSampleModule::StartupModule()
@@ -125,63 +198,35 @@ void FESWSampleModule::StartupModule()
 
 	FESWSampleCommands::Register();
 	
-	PluginCommands = MakeShareable(new FUICommandList);
-	Impl = MakeShareable(new FESWSampleImpl);
-
-	PluginCommands->MapAction(
-		FESWSampleCommands::Get().OpenPluginWindow,
-		FExecuteAction::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::PluginButtonClicked),
-		FCanExecuteAction());
-		
-	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
-	
-	{
-		MenuExtender = MakeShareable(new FExtender());
-		MenuExtension = MenuExtender->AddMenuExtension("WindowLayout", EExtensionHook::After, PluginCommands, FMenuExtensionDelegate::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::AddMenuExtension));
-
-		LevelEditorModule.GetMenuExtensibilityManager()->AddExtender(MenuExtender);
-	}
-	
-	{
-		ToolbarExtender = MakeShareable(new FExtender);
-		ToolbarExtension = ToolbarExtender->AddToolBarExtension("Settings", EExtensionHook::After, PluginCommands, FToolBarExtensionDelegate::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::AddToolbarExtension));
-		
-		LevelEditorModule.GetToolBarExtensibilityManager()->AddExtender(ToolbarExtender);
-	}
-	
-	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(ESWSampleTabName, FOnSpawnTab::CreateSP(Impl.ToSharedRef(), &FESWSampleImpl::OnSpawnPluginTab))
-		.SetDisplayName(LOCTEXT("FESWSampleTabTitle", "ESWSample"))
-		.SetMenuType(ETabSpawnerMenuType::Hidden);
-
-	RefreshLevelEditorMenuAndToolBar();
+	auto OnOpened = [this](TWeakPtr<IMaterialEditor> InWeakMaterialEditor) {OnMaterialEditorOpened(InWeakMaterialEditor); };
+	IMaterialEditorModule& MaterialEditorModule = FModuleManager::LoadModuleChecked<IMaterialEditorModule>("MaterialEditor");
+	OnMaterialEditorOpenedHandle = MaterialEditorModule.Get().OnMaterialEditorOpened().AddLambda(OnOpened);
+	OnMaterialFunctionEditorOpenedHandle = MaterialEditorModule.Get().OnMaterialFunctionEditorOpened().AddLambda(OnOpened);
 }
 
 void FESWSampleModule::ShutdownModule()
 {
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
-
-	SearchSLevelEditorViewportViewMenuAndRemoveExtension(MenuExtension.ToSharedRef());
-
-	FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
-	LevelEditorModule.GetMenuExtensibilityManager()->RemoveExtender(MenuExtender);
-	LevelEditorModule.GetToolBarExtensibilityManager()->RemoveExtender(ToolbarExtender);
-	MenuExtension.Reset();
-	MenuExtender.Reset();
-	ToolbarExtension.Reset();
-	ToolbarExtender.Reset();
-	PluginCommands->UnmapAction(FESWSampleCommands::Get().OpenPluginWindow);
-
-	Impl.Reset();
-	PluginCommands.Reset();
-
-	RefreshLevelEditorMenuAndToolBar();
+	if (FModuleManager::Get().IsModuleLoaded("MaterialEditor"))
+	{
+		IMaterialEditorModule& MaterialEditorModule = FModuleManager::LoadModuleChecked<IMaterialEditorModule>("MaterialEditor");
+		if (OnMaterialEditorOpenedHandle.IsValid())
+		{
+			MaterialEditorModule.Get().OnMaterialEditorOpened().Remove(OnMaterialEditorOpenedHandle);
+			OnMaterialEditorOpenedHandle.Reset();
+		}
+		if (OnMaterialFunctionEditorOpenedHandle.IsValid())
+		{
+			MaterialEditorModule.Get().OnMaterialFunctionEditorOpened().Remove(OnMaterialFunctionEditorOpenedHandle);
+			OnMaterialFunctionEditorOpenedHandle.Reset();
+		}
+	}
+	InstanceObjects.Empty();
 
 	FESWSampleStyle::Shutdown();
 
 	FESWSampleCommands::Unregister();
-
-	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ESWSampleTabName);
 
 	if (GEngine)
 	{
@@ -189,41 +234,24 @@ void FESWSampleModule::ShutdownModule()
 	}
 }
 
-TSharedRef<SDockTab> FESWSampleImpl::OnSpawnPluginTab(const FSpawnTabArgs& SpawnTabArgs)
+void FESWSampleModule::OnMaterialEditorOpened(TWeakPtr<IMaterialEditor> InWeakMaterialEditor)
 {
-	FText WidgetText = FText::Format(
-		LOCTEXT("WindowWidgetText", "Add code to {0} in {1} to override this window's contents"),
-		FText::FromString(TEXT("FESWSampleModule::OnSpawnPluginTab")),
-		FText::FromString(TEXT("ESWSample.cpp"))
-		);
-
-	return SAssignNew(PluginTab, SDockTab)
-		.TabRole(ETabRole::NomadTab)
-		[
-			// Put your tab content here!
-			SNew(SBox)
-			.HAlign(HAlign_Center)
-			.VAlign(VAlign_Center)
-			[
-				SNew(STextBlock)
-				.Text(WidgetText)
-			]
-		];
+	if (InWeakMaterialEditor.IsValid())
+	{
+		if (auto MaterialEditor = InWeakMaterialEditor.Pin())
+		{
+			TSharedPtr<FESWSampleInstanceObject> InstanceObject(new FESWSampleInstanceObject(InWeakMaterialEditor));
+			InstanceObjects.Add(InstanceObject);
+			InstanceObject->OnMaterialEditorOpened(this);
+		}
+	}
 }
 
-void FESWSampleImpl::PluginButtonClicked()
+void FESWSampleModule::OnMaterialEditorClosed(FESWSampleInstanceObject* InstanceObject)
 {
-	FGlobalTabmanager::Get()->InvokeTab(ESWSampleTabName);
-}
-
-void FESWSampleImpl::AddMenuExtension(FMenuBuilder& Builder)
-{
-	Builder.AddMenuEntry(FESWSampleCommands::Get().OpenPluginWindow);
-}
-
-void FESWSampleImpl::AddToolbarExtension(FToolBarBuilder& Builder)
-{
-	Builder.AddToolBarButton(FESWSampleCommands::Get().OpenPluginWindow);
+	InstanceObjects.RemoveAll([InstanceObject](const TSharedPtr<FESWSampleInstanceObject>& instance) {
+		return instance.Get() == InstanceObject;
+	});
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -42,6 +42,7 @@ public class ESWSample : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+				"MaterialEditor",
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
